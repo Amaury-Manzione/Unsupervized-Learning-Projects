@@ -1,0 +1,274 @@
+---
+title : "Projet algorithme EM"
+author : "Manzione Amaury, Antoine Tireau"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+\section{Partie 1}
+On simule deux lois de poisson comme cela est décrit dans l'énoncé. On augmente d'un facteur 10 la taille des données pour avoir une meilleur précision dans l'algorithme EM.
+```{r}
+
+library(ggplot2)
+
+lambda1 <- 3
+lambda2 <- 15
+pi1 <- 1/3
+pi2 <- 2/3
+
+sample1 <- rpois(1000, lambda1)
+sample2 <- rpois(2000, lambda2)
+
+vector <- c(rep(1,1000), rep(2,2000))
+
+data <- data.frame( obs = c(sample1,sample2), label=factor(vector))
+
+ggplot(data,aes(x=obs,fill= label,color=label))+ 
+  geom_histogram(position = "identity",bins = 17)+
+  xlab("observations")+
+  ylab("valeurs des observations")
+
+```
+\section{Algorithme EM pour un mélange poissonien à K composantes}
+
+L'algorithme EM cherche à maximiser l'espérance de la log vraisemblance incomplète :
+\begin{itemize}
+
+  \item l'expression de la log vraisemblance incomplète à l'étape p est :
+  $$
+  L_{\theta^{p}}(X,Z,\theta) =  \sum_{i=1}^{n} \sum_{k=1}^{K} {1}_{(Z_{i} = k | \theta^{p})}( \log(\mathbb{P}(Z_{i} = k | X, \theta)) + \log(\mathbb{P}(X_{i}| Z_{i} = k, \theta)))
+  $$
+  où  $X_{i}$ sont les données observées,
+    $$
+    \theta^{p} = \{\pi_{1}^{p},..,\pi_{K}^{p} ,
+    \lambda_{1}^{p}, ..., \lambda_{K}^{p}
+    \}
+    $$ les probabilités d'appartenance au cluster K et les valeurs des $\lambda$ calculées 
+    à l'étape p,
+    et $Z_{i}$ sont des variables manquantes telles que si :
+    $Z_{i} = 1$ $X_{i} \sim \mathcal{P}(\lambda_{1})$ et réciproqument pour $\lambda_{K}$.
+  \item On cherche donc à maximiser selon $\theta$:
+    $$
+    Q(\theta,\theta^{0}) = \mathbb{E}_{\theta^{p}}(L(X,Z,\theta)
+    $$
+    $$
+    Q(\theta,\theta^{p})  = \sum_{i=1}^{n} \sum_{k=1}^{K} t_{ik}^{(p)} ( \log(\mathbb{P}(Z_{i} = k | X, \theta)) + \log(\mathbb{P}(X_{i}| Z_{i} = k, \theta)))
+    $$
+avec $t_{ik}^{p} = \mathbb{P}(Z_{i} = k | \theta^{p})$
+  $$
+     Q(\theta,\theta^{p})  = \sum_{i=1}^{n} \sum_{k=1}^{K} t_{ik}^{(p)}( \log(\pi_{k}) + \log(\frac{\lambda_{k}^{X_{i}} \exp(-\lambda_{k})}{X_{i} !}))
+  $$
+\end{itemize}
+
+
+\subsection{Initialisation}
+
+On initialise $$\theta^{0} = \{\pi_{1}^{0},..,\pi_{K}^{0} ,
+    \lambda_{1}^{0}, ..., \lambda_{K}^{0}
+    \}$$
+avec des valeurs choisies au hasard.
+```{r}
+
+lambdas_test <- c(8,10)
+probs_test <- c(0.4,0.6)
+```
+
+\subsection{Etape E}
+
+On calcule  $Q(\theta,\theta^{p})$ avec $\theta^{p}$ calculé à l'étape p.
+On calcule $t_{ik}^{(p)}$ avec la formule de Bayes pour les probabilités conditionnelles:
+$$
+t_{ik}^{p} = \frac{
+\mathbb{P}(X_{i}| Z_{i} = k, \theta^{p}) \mathbb{P}(Z_{i} = k | X, \theta^{p})}
+{ \sum_{j=1}^{K}\mathbb{P}(X_{j}| Z_{i} = j, \theta^{p}) \mathbb{P}(Z_{i} = j | X, \theta^{p})}
+$$
+Soit:
+    
+$$
+ t_{ik} = \frac{\frac{\lambda_{k}^{X_{i}} \exp(-\lambda_{k})}{X_{i} !} \pi_{k}
+}
+{ \sum_{j=1}^{K} \frac{\lambda_{j}^{X_{i}} \exp(-\lambda_{j})}{X_{i} !} \pi_{j}}
+$$
+
+```{r}
+# retourne la matriced des tik
+Posterior <- function(X, lambdas, probs) {
+  n = length(X) #nombre d' observations
+  k = length(lambdas) # nombre de clusters
+  Post <- matrix(0, nrow = n , ncol = k) # initalisation de la matrice
+  for (i in 1:n) {
+    x = X[i]
+    liste = c()
+    for (j in 1:k) {
+      a = dpois(x, lambdas[j]) * probs[j]
+      liste = append(liste, a)
+    }
+    Post[i,] = liste / sum(liste)
+  }
+  return(Post)
+}
+```
+
+\subsection{Etape M}
+
+On cherche maintenant à maximiser  $Q(\theta,\theta^{p})$ selon $\theta$.
+Pour cela on calcule les dérivées partielles selon $\pi_{1},..\pi_{K},\lambda_{1},\lambda_{K}$. Pour simplifier on prend $K=2$, car on cherche de toute façon 2 clusters.
+
+\begin{itemize}
+	    \item
+	    $$
+	    \frac{\partial Q(\theta,\theta^{p}) }{\partial \pi_{1}}
+	    = \sum_{i=1}^{n} \sum_{k=1}^{2} t_{ik}^{(p)} \frac{\partial( \log(\pi_{k}) + \log(\frac{\lambda_{k}^{X_{i}} \exp(-\lambda_{k})}{X_{i} !}))}{\partial \pi_{1}}
+	    $$
+	    
+	    $$
+	    \frac{\partial Q(\theta,\theta^{p}) }{\partial \pi_{1}}
+	    = \sum_{i=1}^{n} t_{i1}^{(p)} \frac{1}{\pi_{1}} - t_{i2}^{(p)} \frac{1}{1 - \pi_{1}}
+	    $$
+	    
+	    On cherche $\pi_{1}$ tel que $\frac{\partial Q(\theta,\theta^{0}) }{\partial \pi_{1}} = 0$. On a donc:
+	    $$
+	    \frac{\partial Q(\theta,\theta^{p}) }{\partial \pi_{1}} = 0
+	    \iff 
+	    \sum_{i=1}^{n} t_{i1}^{(p)} \frac{1}{\pi_{1}} - t_{i2}^{(p)} \frac{1}{1 - \pi_{1}} = 0
+	    $$
+	    
+	    $$
+	    \iff
+	    \pi_{1} = \frac{\sum_{i=1}^{n} t_{i1}^{(p)}}{\sum_{i=1}^{n} t_{i1}^{(p)} + \sum_{i=1}^{n} t_{i2}^{(p)} }
+	            = \frac{\sum_{i=1}^{n} t_{i1}^{(p)}}{n}
+	    $$
+	    
+	    \item $\pi_{1}$ et  $\pi_{2}$ jouent un rôle symétrique donc:
+	    $$
+	    \pi_{2} = \frac{\sum_{i=1}^{n} t_{i2}^{(p)}}{\sum_{i=1}^{n} t_{i1}^{(p)} + \sum_{i=1}^{n} t_{i2}^{(p)} }
+	            = \frac{\sum_{i=1}^{n} t_{i2}^{(p)}}{n}
+	    $$
+	    \item 
+	    $$
+	    \frac{\partial Q(\theta,\theta^{p}) }{\partial \lambda_{1}}
+	    = \sum_{i=1}^{n} \sum_{k=1}^{2} t_{ik}^{(p)} \frac{\partial( \log(\pi_{k}) + \log(\frac{\lambda_{k}^{X_{i}} \exp(-\lambda_{k})}{X_{i} !}))}{\partial \lambda_{1}}
+	    $$
+	    
+	    $$
+	    \frac{\partial Q(\theta,\theta^{p}) }{\partial \lambda_{1}}
+	    = \sum_{i=1}^{n} t_{i1}^{(p)} \frac{\partial( \log(\frac{\lambda_{1}^{X  _{i}} \exp(-\lambda_{1})}{X_{i} !}))}{\partial \lambda_{1}}
+	    = \sum_{i=1}^{n} \frac{t_{i1}^{(p)}}{X_{i}!} (\frac{\partial(X_{i}\log(\lambda_{1}) - \lambda_{1})}{\partial \lambda_{1}})
+	    = \sum_{i=1}^{n} \frac{t_{i1}^{(p)}}{X_{i}!}
+	    (\frac{X_{i}}{\lambda_{1}} - 1)
+	    $$
+	    
+	    On a :
+	    $$
+	    \frac{\partial Q(\theta,\theta^{p}) }{\partial \lambda_{1}} = 0
+	    \iff \sum_{i=1}^{n}\frac{t_{i1}^{(p)}}{X_{i}!}
+	    (\frac{X_{i}}{\lambda_{1}} - t_{i1}^{(p)}) = 0
+	    \iff \sum_{i=1}^{n} t_{i1}^{(p)}
+	    \frac{X_{i}}{\lambda_{1}} - t_{i1}^{(p)} = 0
+	    \iff \lambda_{1} = \frac{\sum_{i=1}^{n} t_{i1}^{(p)} X_{i}}{\sum_{i=1}^{n} t_{i1}^{(p)}}
+	    $$
+	    
+	    \item 
+        $\lambda_{1}$ et  $\lambda_{2}$ jouent un rôle symétrique donc:
+        $$
+        \lambda_{2} = \frac{\sum_{i=1}^{n} t_{i2}^{(p)} X_{i}}{\sum_{i=1}^{n} t_{i2}^{(p)}}
+        $$
+	    
+	    
+    \end{itemize}
+ On trouve finalement :
+    $$
+    \theta^{p+1} = \{\pi_{1}^{p+1} =  \frac{\sum_{i=1}^{n} t_{i1}^{(p)}}{n},\pi_{2}^{p+1} =  \frac{\sum_{i=1}^{n} t_{i2}^{(p)}}{n},
+    \lambda_{1}^{p+1} = \frac{\sum_{i=1}^{n} t_{i1}^{(p)} X_{i}}{\sum_{i=1}^{n} t_{i1}^{(p)}}, \lambda_{2}^{p+1} = \frac{\sum_{i=1}^{n} t_{i2}^{(p)} X_{i}}{\sum_{i=1}^{n} t_{i2}^{(p)}}
+    \}
+    $$
+
+
+```{r}
+#retourne la liste des probabilities d'appartenance a un cluster
+prob_opt <- function(posterior) {
+  
+  k = ncol(posterior)
+  liste = c()
+  for (i in 1:k ) {
+    val = sum(posterior[,i])
+    liste = append(liste, val)
+  }
+  return(liste / sum(liste))
+}
+```
+
+```{r}
+#retourne la list des lambdas
+lamba_opt <- function(X, posterior){
+  
+  k = ncol(posterior)
+  liste1 = c()
+  liste2 = c()
+  for (i in 1:k ) {
+    val = posterior[,i]
+    liste1 = append(liste1, sum(val*X))
+    liste2 = append(liste2,sum(val))
+  }
+  
+  return(liste1 / liste2)
+  
+}
+```
+
+
+On repète l'étape E et M jusqu'a ce que :
+	$$
+	\frac{{\lVert \theta^{q} - \theta^{q+1} \rVert}^{2}}{{\lVert \theta^{q} \rVert}^{2}} < \epsilon
+	$$
+    avec epsilon petit.
+On code ci dessus la l'algorithme EM à l'aide des fonctions codées avant.
+Comme les lambdas sont des valeurs entières on arrondi les valeurs trouvées avec l'entier le plus proche.
+
+```{r}
+#retourne les lambdas and les probabilites optimales
+# prend des valeurs aléatoire de lambdas and probs en argument
+ExpectationMaximisation2 <- function(X, lambdas, probs,max_iterations,epsilon) {
+  old_teta = c(lambdas,probs)
+  
+  posterior = Posterior(X,lambdas,probs)
+  lambdas = lamba_opt(X,posterior)
+  probs = prob_opt(posterior)
+  
+  teta = c(lambdas,probs)
+  diff = sum((teta -old_teta)**2) / sum(old_teta**2) 
+  iter = 0
+  #tant que la différence est plus grande que'espilon on continue de calculer 
+  while( diff > epsilon  && iter < max_iterations){
+    posterior = Posterior(X,lambdas,probs) # Etape E : nouveau tik
+    lambdas = lamba_opt(X,posterior) # Etape M : nouveaux lambdas
+    probs = prob_opt(posterior) # Etape M : nouvelles probabilites
+    
+    old_teta = teta 
+    teta = c(lambdas,probs)
+    diff = sum((teta -old_teta)**2) / sum(old_teta**2)
+    print(iter)
+    print(teta)
+    iter = iter + 1 # nombre d' iterations
+  }
+  
+  # recherche l'entier le plus proche
+  for( i in 1:length(lambdas) ){
+      lambdas[i] = ifelse((ceiling(lambdas[i])-lambdas[i]) > 0.5,floor(lambdas[i]),ceiling(lambdas[i]))
+  }
+  return(c(lambdas,probs))
+}
+```
+
+
+```{r}
+ExpectationMaximisation2(data$obs, c(2,11),c(0.5,0.5),50,1e-10)
+```
+
+
+
+
+On voit que les valeurs obtenues sont précises.
+
+
